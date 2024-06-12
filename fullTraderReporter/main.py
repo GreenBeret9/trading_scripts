@@ -13,9 +13,12 @@ import pandas as pd
 
 class ExitType(Enum):
     STOP = "Stop"
-    TAKE_PROFIT = "TakeProfit"
+    TAKE_PROFIT = "TP"
+
+
 class EntryExit:
-    relevant_columns = ['Account', 'Market pos.', 'Entry price', 'Exit price', 'Qty', 'Entry time', 'Exit time', 'Instrument']
+    relevant_columns = ['Account', 'Market pos.', 'Entry price', 'Exit price', 'Qty', 'Entry time', 'Exit time',
+                        'Instrument']
 
     def __init__(self, account, market_position, entry_price, exit_price, qty, entry_time, exit_time, instrument):
         self.Account = account
@@ -27,21 +30,21 @@ class EntryExit:
         self.Exit_time = exit_time
         self.Instrument = instrument
 
-
-    def calculate_exit_type(self):
-        if self.Exit_price > self.Entry_price:
+    def get_exit_type(self):
+        if self.Profit > 0:
             return ExitType.TAKE_PROFIT
         else:
             return ExitType.STOP
 
     @property
-    def Exits(self):
-        return {'Exit time': self.Exit_time, 'Exit price': self.Exit_price, 'Qty': self.Qty}
+    def Exit(self):
+        return {'price': self.Exit_price, 'Qty': self.Qty, 'Pnl': self.Profit}
 
+    @property
     def Profit(self):
-        return (self.Exit_price-self.Entry_price)*self.Qty
-
-
+        if self.Market_pos == 'Long':
+            return (self.Exit_price - self.Entry_price) * self.Qty
+        return -(self.Exit_price - self.Entry_price) * self.Qty
     @classmethod
     def from_csv_row(cls, csv_row):
         kwargs = {column: csv_row[column] for column in cls.relevant_columns}
@@ -64,7 +67,7 @@ class Trade:
         self.Qty = sum(obj.Qty for obj in entry_exit_objects)
 
         # Combine Exits from all EntryExit objects into one list
-        self.Exits = [obj.Exits for obj in entry_exit_objects]
+        self.Exits = self.get_exits(entry_exit_objects)
 
         # Set other properties from the reference EntryExit object
         reference_object = entry_exit_objects[0]
@@ -74,11 +77,23 @@ class Trade:
         self.Entry_time = reference_object.Entry_time
         self.Instrument = reference_object.Instrument
 
+    def get_exits(self, entry_exits):
+        Exits = []
+        if len(entry_exits) > 1:
+            for i in range(len(entry_exits)):
+                exit = entry_exits[i].Exit
+                Exits.append(f'{entry_exits[i].get_exit_type().value}{i+1}: {exit}')
+            return Exits
+        else:
+            close = entry_exits[0].Exit
+            Exits.append(f'{entry_exits[0].get_exit_type().value} {close}')
+            return Exits
+
+
 
     @classmethod
     def from_entry_exit_objects(cls, entry_exit_objects):
         return cls(entry_exit_objects)
-
 
     @classmethod
     def from_csv_file(cls, csv_file_path):
@@ -91,11 +106,11 @@ class Trade:
 
         return cls.from_entry_exit_objects(entry_exit_objects)
 
-
     def __repr__(self):
-        return f"Trade(Account={self.Account}, Market_pos={self.Market_pos}, Entry_price={self.Entry_price}, " \
+        return f"Account={self.Account}, Market_pos={self.Market_pos}, Entry_price={self.Entry_price}, " \
                f"Qty={self.Qty}, Entry_time={self.Entry_time}, Instrument={self.Instrument}, " \
-               f"Exits={self.Exits})"
+               f"Exits={self.Exits}\n"
+
 
 def create_trades(entry_exits):
     unique_sets = {}
@@ -111,16 +126,17 @@ def create_trades(entry_exits):
             for line in unique_sets[key]:
                 if line.Exit_price == entry_exit.Exit_price:
                     exit_index = idx
-                idx+=1
+                idx += 1
 
-            if  exit_index < 0:
+            if exit_index < 0:
                 unique_sets[key].append(entry_exit)
             else:
                 unique_sets[key][exit_index].Qty += entry_exit.Qty
 
-
     trades = [Trade(entry_exit) for entry_exit in unique_sets.values()]
     return trades
+
+
 def parse_ninjatrader_csv(directory_path):
     # Get a list of all files in the directory
     files = os.listdir(directory_path)
@@ -140,7 +156,8 @@ def parse_ninjatrader_csv(directory_path):
     df = pd.read_csv(csv_file_path)
 
     # Extract relevant columns
-    relevant_columns = ['Account', 'Market pos.', 'Entry price', 'Exit price', 'Qty', 'Profit', 'Entry time', 'Exit time', 'Instrument']
+    relevant_columns = ['Account', 'Market pos.', 'Entry price', 'Exit price', 'Qty', 'Profit', 'Entry time',
+                        'Exit time', 'Instrument']
     df = df[relevant_columns]
 
     # Create a list to store EntryExit instances
@@ -164,10 +181,10 @@ def parse_ninjatrader_csv(directory_path):
     return entryexits
 
 
-
 all_entry_exits = parse_ninjatrader_csv(directory_path)
 trades = create_trades(all_entry_exits)
 print(trades)
+
 
 # Function to convert Trade objects to a dictionary
 def trade_to_dict(trade):
@@ -181,9 +198,9 @@ def trade_to_dict(trade):
         'Exits': trade.Exits
     }
 
+
 # Write trades to a JSON file
 output_file_path = 'trades.json'
-
 
 output_csv_path = "trades.csv"
 with open(output_file_path, 'w') as json_file:
